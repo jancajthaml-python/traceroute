@@ -1,14 +1,26 @@
+#!/usr/bin/python
+
 import socket
-import os
 import struct
-import time
-import select
+import sys
 import optparse
+import os
+import time
 
 ICMP_ECHO_REQUEST = 8
 MAX_HOPS = 60
-TIMEOUT = 2.0
+TIMEOUT = 5
 TRIES = 10
+PORT = 33434
+
+class flushfile(file):
+    def __init__(self, f):
+        self.f = f
+    def write(self, x):
+        self.f.write(x)
+        self.f.flush()
+
+sys.stdout = flushfile(sys.stdout)
 
 def checksum(str):
     csum = 0
@@ -23,16 +35,6 @@ def checksum(str):
     csum = csum+(csum >> 16)
     return (~csum & 0xffff) >> 8 | ((~csum & 0xffff) << 8 & 0xff00)
 
-
-def get_name_or_ip(hostip):
-    try:
-        host = socket.gethostbyaddr(hostip)
-        nameorip = nameorip = u'{0} ({1})'.format(hostip, host[0])
-    except Exception:
-        nameorip = u'{0}'.format(hostip)
-    return nameorip
-
-
 def packet():
     id = os.getpid() & 0xFFFF
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, 0, id, 1)
@@ -40,62 +42,72 @@ def packet():
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, socket.htons(checksum(header + data)) & 0xffff, id, 1)  # noqa
     return header+data
 
+def traceroute(dest_name):
+    dest_addr = socket.gethostbyname(dest_name)
 
-def traceroute(target):
+    icmp = socket.getprotobyname('icmp')
+    udp = socket.getprotobyname('udp')
+    sys.stdout.write(" tracing %s\n" % dest_name)
 
-    timeLeft = TIMEOUT
-    for ttl in xrange(1, MAX_HOPS):
-        for tries in xrange(TRIES):
-            icmp = socket.getprotobyname('icmp')
-            crawler = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
-            crawler.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, struct.pack('I', ttl))  # noqa
-            crawler.settimeout(TIMEOUT)
+    ttl = 1
+    tries = TRIES
+
+    while True:
+        recv_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
+        send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, udp)
+        send_socket.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, struct.pack('I', ttl))
+        recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, struct.pack("ll", TIMEOUT, 0))
+
+        recv_socket.bind(("", PORT))
+        sys.stdout.write(" %d  " % ttl)
+        send_socket.sendto(packet(), (dest_name, PORT))
+        curr_addr = None
+        curr_name = None
+        finished = False
+        while not finished and tries > 0:
             try:
-                d = packet()
-                crawler.sendto(d, (target, 0))
-                t = time.time()
-                startedSelect = time.time()
-                if timeLeft <= 0:
-                    continue
-                chunk = select.select([crawler], [], [], timeLeft)
-                #if chunk[0] != []:
-                    #print " %d * * *" % (ttl)
-                recvPacket, addr = crawler.recvfrom(1024)
-                timeReceived = time.time()
-                timeLeft = timeLeft - (time.time() - startedSelect)
-            except socket.timeout:
-                continue
-            else:
-                type, code, checksum, id, sequence = struct.unpack('bbHHh', recvPacket[20:28])  # noqa
-                hostname = get_name_or_ip(addr[0])
-                if type == 11:
-                    print " %d rtt=%.0fms %s" % (ttl, (timeReceived-t) * 1000, hostname)  # noqa
-                elif type == 3:
-                    print " %d rtt=%.0fms %s" % (ttl, (timeReceived-t) * 1000, hostname)  # noqa
-                elif type == 0:
-                    bytes = struct.calcsize('d')
-                    timeSent = struct.unpack('d', recvPacket[28:28 + bytes])[0]
-                    print " %d rtt=%.0fms %s\n" % (ttl, (timeReceived-timeSent) * 1000, hostname)  # noqa
-                    return
-                else:
-                    print 'error'
-                break
-            finally:
-                crawler.close()
+                recvPacket, curr_addr = recv_socket.recvfrom(512)
 
+                finished = True
+                curr_addr = curr_addr[0]
+                try:
+                    curr_name = socket.gethostbyaddr(curr_addr)[0]
+                except socket.error:
+                    curr_name = curr_addr
+            except socket.error as (errno, errmsg):
+                tries = tries - 1
+                sys.stdout.write("* ")
+
+        send_socket.close()
+        recv_socket.close()
+
+        if not finished:
+            pass
+
+        if curr_addr is not None:
+            type, code, checksum, id, sequence = struct.unpack('bbHHh', recvPacket[20:28])  # noqa
+
+            if curr_name == curr_addr:
+                curr_host = curr_addr
+            else:
+                curr_host = "%s (%s)" % (curr_name, curr_addr)
+        else:
+            curr_host = ""
+
+        sys.stdout.write("%s\n" % (curr_host))
+
+        ttl += 1
+        if curr_addr == dest_addr or ttl > MAX_HOPS:
+            break
 
 def main():
-
     cmdparser = optparse.OptionParser("%prog --target=IP_ADDRESS")
     cmdparser.add_option(
         "-t", "--target", type="string", default="8.8.8.8",
         help="Hostname or IP address of destination host (default: 8.8.8.8)")
     options, _ = cmdparser.parse_args()
-
     traceroute(options.target)
-
     return 0
-
 
 if __name__ == "__main__":
     main()

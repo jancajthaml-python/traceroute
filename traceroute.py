@@ -67,8 +67,6 @@ def traceroute(dest_name):
             pass
 
         if curr_addr is not None:
-            type, code, checksum, id, sequence = struct.unpack('bbHHh', recvPacket[20:28])  # noqa
-
             if curr_name == curr_addr:
                 curr_host = curr_addr
             else:

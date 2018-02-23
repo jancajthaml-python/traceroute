@@ -6,12 +6,12 @@ import sys
 import optparse
 import os
 import time
+import random
 
 ICMP_ECHO_REQUEST = 8
 MAX_HOPS = 60
 TIMEOUT = 5
 TRIES = 10
-PORT = 33434
 
 class flushfile(file):
     def __init__(self, f):
@@ -21,26 +21,6 @@ class flushfile(file):
         self.f.flush()
 
 sys.stdout = flushfile(sys.stdout)
-
-def checksum(str):
-    csum = 0
-    until = (len(str) / 2) * 2
-    count = 0
-    while count < until:
-        csum = (csum+ord(str[count+1])*256+ord(str[count])) & 0xffffffffL  # noqa
-        count += 2
-    if until < len(str):
-        csum = (csum+ord(str[len(str)-1])) & 0xffffffffL  # noqa
-    csum = (csum >> 16)+(csum & 0xffff)
-    csum = csum+(csum >> 16)
-    return (~csum & 0xffff) >> 8 | ((~csum & 0xffff) << 8 & 0xff00)
-
-def packet():
-    id = os.getpid() & 0xFFFF
-    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, 0, id, 1)
-    data = struct.pack('d', time.time())
-    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, socket.htons(checksum(header + data)) & 0xffff, id, 1)  # noqa
-    return header+data
 
 def traceroute(dest_name):
     dest_addr = socket.gethostbyname(dest_name)
@@ -58,9 +38,11 @@ def traceroute(dest_name):
         send_socket.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, struct.pack('I', ttl))
         recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, struct.pack("ll", TIMEOUT, 0))
 
-        recv_socket.bind(("", PORT))
+        port = int((random.random() + 33434) % 65535)
+
+        recv_socket.bind(("", port))
         sys.stdout.write(" %d  " % ttl)
-        send_socket.sendto(packet(), (dest_name, PORT))
+        send_socket.sendto("", (dest_name, port))
         curr_addr = None
         curr_name = None
         finished = False
@@ -97,7 +79,7 @@ def traceroute(dest_name):
         sys.stdout.write("%s\n" % (curr_host))
 
         ttl += 1
-        if curr_addr == dest_addr or ttl > MAX_HOPS:
+        if tries == 0 or curr_addr == dest_addr or ttl > MAX_HOPS:
             break
 
 def main():

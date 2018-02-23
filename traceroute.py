@@ -33,10 +33,23 @@ def traceroute(dest_name):
     tries = TRIES
 
     while True:
-        recv_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
         send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, udp)
         send_socket.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, struct.pack('I', ttl))
+        send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            recv_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
+        except socket.error, (errno, msg):
+            if errno == 1:
+                msg = msg + (
+                    " - Note that ICMP messages can only be sent from processes"
+                    " running as root."
+                )
+                raise socket.error(msg)
+            raise
+
         recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, struct.pack("ll", TIMEOUT, 0))
+        recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         port = int((random.random() + 33434) % 65535)
 
